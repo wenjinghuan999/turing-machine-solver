@@ -1,6 +1,7 @@
 import itertools
 import math
 from typing import Callable, List, Tuple, Iterable, Optional, Container, Sequence
+import argparse
 
 from constants import NUMBERS, VALIDATORS
 
@@ -135,8 +136,11 @@ class Solver:
 
 
 if __name__ == '__main__':
-    # solver = Solver([4, 9, 11, 14])
-    solver = Solver([5, 14, 18, 19, 20])
+    parser = argparse.ArgumentParser()
+    parser.add_argument('validator_ids', nargs='+', type=int)
+    args = parser.parse_args()
+    
+    solver = Solver(args.validator_ids)
     while True:
         query = solver.next_query()
         if query is None:
