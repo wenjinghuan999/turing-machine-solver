@@ -1,5 +1,6 @@
 
 NUMBERS = [1, 2, 3, 4, 5]
+QUERIES_PER_ROUND = 3
 
 VALIDATORS = {
     1: [

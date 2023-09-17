@@ -3,7 +3,7 @@ import math
 from typing import Callable, List, Tuple, Iterable, Optional, Container, Sequence
 import argparse
 
-from constants import NUMBERS, VALIDATORS
+from constants import NUMBERS, QUERIES_PER_ROUND, VALIDATORS
 
 
 class Validator:
@@ -56,6 +56,9 @@ class Solver:
         for hidden, option in self.hidden_and_options:
             print(' -', hidden, '=>', option)
     
+    def solved(self) -> bool:
+        return len(self.hidden_and_options) == 1
+    
     def next_query(self) -> List[Tuple[Tuple[int, int, int], int]]:
         '''
         returns best query: options and validator_id
@@ -63,40 +66,39 @@ class Solver:
         if len(self.hidden_and_options) == 0:
             print('Error: Game not valid because no possible hiddens')
             return []
-        if len(self.hidden_and_options) == 1:
+        if self.solved():
             hidden, option = self.hidden_and_options[0]
             print('Solved:')
             print(' - hidden:', hidden)
             print(' - option:', option)
             return []
 
-        query_and_entropies = self.calc_entropy()
-        if len(query_and_entropies) == 0:
-            print('Error: Game not valid no query can provide infomation')
-            return []
+        print('Find all possible queries:')
+        all_queries = self.recursively_find_queries([], self.hidden_and_options, 0.0, 1.0)
+        if len(all_queries) == 0:
+            print('Error: no valid query found')
         
-        # choose best three (or less) queries
-        for n in range(3, 0, -1):
-            for query_and_entropies_n in itertools.combinations(query_and_entropies, n):
-                option = self.find_option_for_queries([(option, v) for option, v, _ in query_and_entropies_n])
-                if option is not None:
-                    print(f'Best {n} queries:')
-                    for query_and_entropy in query_and_entropies_n:
-                        _, v, entropy = query_and_entropy
-                        print(' -', chr(v + ord('A')), option, 'which has entropy', entropy)
-                    return [(option, v) for _, v, _ in query_and_entropies_n]
-        return [] # not likely to happen
+        all_queries.sort(key=lambda x: x[1], reverse=True)
+        queries, entropy = all_queries[0]
+
+        option = self.find_option_for_queries(queries)
+        if option is not None:
+            print('[Query]', option, *[chr(v + ord('A')) for _, v in queries], 'which has entropy', entropy)
+            return [(option, v) for _, v in queries]
+        return []
 
     def update_query_result(self, query_option: Tuple[int, int, int], query_v: int, query_r: bool):
         print('Updating query:', chr(query_v + ord('A')), query_option, '=>', r)
         self.hidden_and_options = [(h, op) for h, op in self.hidden_and_options if self.game.validators[query_v].standards[h[query_v]](*query_option) == query_r]
+        for hidden, option in self.hidden_and_options:
+            print(' -', hidden, '=>', option)
         
-    def check_should_query(self, query_option: Tuple[int, int, int], query_v: int):
-        query_and_entropies = self.calc_entropy()
-        for option, v, entropy in query_and_entropies:
-            if query_option == option and query_v == v and entropy > 0.0:
-                return True
-        return False
+    def check_should_query(self, option: Tuple[int, int, int], v: int):
+        rs = tuple([standard(*option) for standard in self.game.validators[v].standards])
+        results = { True: 0, False: 0 }
+        for hidden, _ in self.hidden_and_options:
+            results[rs[hidden[v]]] += 1
+        return results[True] != 0 and results[False] != 0
 
     @staticmethod
     def try_validate(validators: Container[Validator], hidden: Container[int], option: Tuple[int, int, int]) -> bool:
@@ -125,34 +127,51 @@ class Solver:
                 print(' -', hidden, '=>', option, '[x] validator', chr(v + ord('A')), 'is useless')
                 return True
         return False
-    
-    def calc_entropy(self) -> List[Tuple[Tuple[int, int, int], int, float]]:
-        query_and_entropies = []
-        print('Calculate entropy for each validator and each option:')
+
+    def recursively_find_queries(self, previous_queries: List[Tuple[Sequence[bool], int]], previous_hidden_and_options: List[Tuple[Sequence[int], Tuple[int, int, int]]], previous_entropy: float, probability: float) -> List[Tuple[List[Tuple[Sequence[bool], int]], float]]:
+        if len(previous_queries) == QUERIES_PER_ROUND:
+            return []
+
+        result_queries_and_entropies: List[Tuple[List[Tuple[List[bool], int]], float]] = []
+        # choose from each validator
         for v in range(len(self.game.validators)):
+            # if this validator has been queried before, skip
+            if any([query[1] == v for query in previous_queries]):
+                continue
             options = {}
             for option in itertools.product(NUMBERS, NUMBERS, NUMBERS):
+                # check this satisfies all previous queries
+                if not all([tuple([standard(*option) for standard in self.game.validators[prev_v].standards]) == prev_rs for prev_rs, prev_v in previous_queries]):
+                    continue
                 rs = tuple([standard(*option) for standard in self.game.validators[v].standards])
                 options.setdefault(rs, option)
 
             for rs, option in options.items():
                 results = { True: 0, False: 0 }
-                for hidden, _ in self.hidden_and_options:
+                for hidden, _ in previous_hidden_and_options:
                     results[rs[hidden[v]]] += 1
                 if results[True] == 0 or results[False] == 0:
                     continue
                 p = results[True] / (results[True] + results[False])
                 entropy = -p * math.log2(p) - (1 - p) * math.log2(1 - p) if p > 0.0 and p < 1.0 else 0.0
-                query_and_entropies.append((option, v, entropy))
-                print(' -', chr(v + ord('A')), rs, f'e.g.{option}', '=>', entropy)
-        
-        query_and_entropies.sort(key=lambda x: x[2], reverse=True)
-        return query_and_entropies
+                entropy = previous_entropy + probability * entropy
 
-    def find_option_for_queries(self, queries: Iterable[Tuple[Tuple[int, int, int], int]]) -> Optional[Tuple[int, int, int]]:
+                # append to result
+                queries = previous_queries + [(rs, v)]
+                result_queries_and_entropies.append((queries, entropy))
+                print(' -', option, *[chr(vv + ord('A')) for _, vv in queries], '=>', entropy)
+
+                # recursively find more queries
+                hidden_and_options_if_true = [(h, op) for h, op in previous_hidden_and_options if self.game.validators[v].standards[h[v]](*option) == True]
+                result_queries_and_entropies.extend(self.recursively_find_queries(queries, hidden_and_options_if_true, entropy, p))
+                hidden_and_options_if_false = [(h, op) for h, op in previous_hidden_and_options if self.game.validators[v].standards[h[v]](*option) == False]
+                result_queries_and_entropies.extend(self.recursively_find_queries(queries, hidden_and_options_if_false, entropy, 1 - p))
+        return result_queries_and_entropies
+
+    def find_option_for_queries(self, queries: Iterable[Tuple[Sequence[bool], int]]) -> Optional[Tuple[int, int, int]]:
         def check_option_for_query(option: Tuple[int, int, int], query: Tuple[Tuple[int, int, int], int]) -> bool:
-            query_option, query_v = query
-            return all([standard(*option) == standard(*query_option) for standard in self.game.validators[query_v].standards])
+            query_rs, query_v = query
+            return tuple([standard(*option) for standard in self.game.validators[query_v].standards]) == query_rs
         for option in itertools.product(NUMBERS, NUMBERS, NUMBERS):
             if all([check_option_for_query(option, query) for query in queries]):
                 return option
@@ -164,7 +183,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     solver = Solver(args.validator_ids)
-    while True:
+    while not solver.solved():
         queries = solver.next_query()
         if not queries:
             break
@@ -176,6 +195,9 @@ if __name__ == '__main__':
 
             r = None
             while r not in ['0', '1']:
-                r = input(f'> {chr(v + ord("A"))} {option}: ')
+                r = input(f'> {option} {chr(v + ord("A"))}: ')
             r = bool(int(r))
             solver.update_query_result(option, v, r)
+            if solver.solved():
+                solver.next_query()
+                break
