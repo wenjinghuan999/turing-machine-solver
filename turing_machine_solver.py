@@ -31,6 +31,7 @@ class Solver:
         self.game = Game(validator_ids)
         self.filter_unique_answer = filter_unique_answer
         self.filter_useless_validators = filter_useless_validators
+        self.history = []
         
         print('Initializing solver for game:', validator_ids)
         for v in range(len(self.game.validators)):
@@ -65,6 +66,37 @@ class Solver:
     
     def solved(self) -> bool:
         return len(self.hidden_and_codes) == 1
+
+    def print_solved(self):
+        hidden, code = self.hidden_and_codes[0]
+        print('Solved:')
+        print(' - hidden:', hidden)
+        print(' - code  :', code)
+
+        rounds = []
+        for query_code, query_v, query_r in self.history:
+            if len(rounds) > 0 and rounds[-1][0] == query_code and len(rounds[-1][1]) < 3:
+                rounds[-1][1].append((query_v, query_r))
+            else:
+                rounds.append((query_code, [(query_v, query_r)]))
+        
+        if not self.history:
+            print('Solved without asking questions')
+            return
+        
+        print('History:')
+        print('       ', *[chr(v + ord('A')) for v in range(len(self.game.validators))])
+        for round in rounds:
+            code, round_history = round
+            line = []
+            for v in range(len(self.game.validators)):
+                if (v, True) in round_history:
+                    line.append('V')
+                elif (v, False) in round_history:
+                    line.append('X')
+                else:
+                    line.append(' ')
+            print(*code, '|', *line)
     
     def next_query(self) -> List[Tuple[Tuple[int, int, int], int]]:
         '''
@@ -74,10 +106,7 @@ class Solver:
             print('Error: Game not valid because no possible hiddens')
             return []
         if self.solved():
-            hidden, code = self.hidden_and_codes[0]
-            print('Solved:')
-            print(' - hidden:', hidden)
-            print(' - code  :', code)
+            self.print_solved()
             return []
 
         print('Find all possible queries:')
@@ -101,6 +130,7 @@ class Solver:
 
     def update_question_result(self, query_code: Tuple[int, int, int], query_v: int, query_r: bool):
         print('Updating question:', chr(query_v + ord('A')), query_code, '=>', r)
+        self.history.append((query_code, query_v, query_r))
         self.hidden_and_codes = [(h, op) for h, op in self.hidden_and_codes if self.game.validators[query_v].criterions[h[query_v]](*query_code) == query_r]
         for hidden, code in self.hidden_and_codes:
             print(' -', hidden, '=>', code)
@@ -206,7 +236,7 @@ if __name__ == '__main__':
     
     solver = Solver(args.validator_ids, **kwargs)
     if solver.solved():
-        solver.next_query()
+        solver.print_solved()
     while not solver.solved():
         query = solver.next_query()
         if not query:
@@ -223,5 +253,5 @@ if __name__ == '__main__':
             r = bool(int(r))
             solver.update_question_result(code, v, r)
             if solver.solved():
-                solver.next_query()
+                solver.print_solved()
                 break
