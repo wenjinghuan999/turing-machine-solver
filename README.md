@@ -1,5 +1,4 @@
-# turing-machine-solver
-A solver for board game: Turing Machine
+# A solver for board game: Turing Machine
 
 See [the board game website](http://turingmachine.info)
 
