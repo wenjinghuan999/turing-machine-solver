@@ -26,9 +26,11 @@ class Game:
 
 
 class Solver:
-    def __init__(self, validator_ids: Iterable[int]) -> None:
+    def __init__(self, validator_ids: Iterable[int], *, filter_unique_answer = True, filter_useless_validators = True) -> None:
         validator_ids = list(validator_ids)
         self.game = Game(validator_ids)
+        self.filter_unique_answer = filter_unique_answer
+        self.filter_useless_validators = filter_useless_validators
         
         print('Initializing solver for game:', validator_ids)
         for v in range(len(self.game.validators)):
@@ -39,22 +41,27 @@ class Solver:
         # a possible hidden is a hidden that can uniquely determine an option, i.e. only one option can satisfy all validator standards
         self.hidden_and_options = []
         for hidden in itertools.product(*[range(len(validator.standards)) for validator in self.game.validators]):
-            option = Solver.check_hidden_possible(hidden, self.game.validators)
+            option = Solver.check_hidden_possible(hidden, self.game.validators, self.filter_unique_answer)
             if option is not None:
                 self.hidden_and_options.append((hidden, option))
 
         print('Possible hiddens and corresponding options:')
         for hidden, option in self.hidden_and_options:
             print(' -', hidden, '=>', option)
+        print(f'({len(self.hidden_and_options)} possible hiddens in total)')
                 
         # filter useless validators
         # a validator is useless if option can be uniquely determined by other validators
-        print('Filtering hiddens:')
-        self.hidden_and_options = list(itertools.filterfalse(lambda h_o: self.has_useless_validators(h_o[0], h_o[1]), self.hidden_and_options))
+        if self.filter_useless_validators:
+            print('Filtering hiddens by checking useless validators:')
+            self.hidden_and_options = list(itertools.filterfalse(lambda h_o: self.has_useless_validators(h_o[0], h_o[1]), self.hidden_and_options))
+        else:
+            print('Skip filtering hiddens by checking useless validators')
 
         print('Filtered hiddens and corresponding options:')
         for hidden, option in self.hidden_and_options:
             print(' -', hidden, '=>', option)
+        print(f'({len(self.hidden_and_options)} possible hiddens in total)')
     
     def solved(self) -> bool:
         return len(self.hidden_and_options) == 1
@@ -79,6 +86,11 @@ class Solver:
             print('Error: no valid query found')
         
         all_queries.sort(key=lambda x: x[1], reverse=True)
+        # print top 10 queries
+        for queries, entropy in all_queries[:10]:
+            print(' -', self.find_option_for_queries(queries), *[chr(vv + ord('A')) for _, vv in queries], '=>', entropy)
+        if len(all_queries) > 10:
+            print(f' - ... ({len(all_queries)} in total)')
         queries, entropy = all_queries[0]
 
         option = self.find_option_for_queries(queries)
@@ -92,6 +104,7 @@ class Solver:
         self.hidden_and_options = [(h, op) for h, op in self.hidden_and_options if self.game.validators[query_v].standards[h[query_v]](*query_option) == query_r]
         for hidden, option in self.hidden_and_options:
             print(' -', hidden, '=>', option)
+        print(f'({len(self.hidden_and_options)} possible hiddens left)')
         
     def check_should_query(self, option: Tuple[int, int, int], v: int):
         rs = tuple([standard(*option) for standard in self.game.validators[v].standards])
@@ -106,13 +119,15 @@ class Solver:
         return all([validator.standards[i](*option) for validator, i in zip(validators, hidden)])
     
     @staticmethod 
-    def check_hidden_possible(hidden: Container[int], validators: Container[Validator]) -> Optional[Tuple[int, int, int]]:
+    def check_hidden_possible(hidden: Container[int], validators: Container[Validator], filter_unique_answer) -> Optional[Tuple[int, int, int]]:
         assert(len(hidden) == len(validators))
         options = []
         for option in itertools.product(NUMBERS, NUMBERS, NUMBERS):
             if Solver.try_validate(validators, hidden, option):
                 options.append(option)
-        if len(options) == 1:
+        if filter_unique_answer and len(options) > 1:
+            return None
+        elif len(options) > 0:
             return options[0]
         else:
             return None
@@ -123,7 +138,7 @@ class Solver:
         for v in range(len(hidden)):
             other_hiddens = [hidden[x] for x in range(len(hidden)) if x != v]
             other_validators = [self.game.validators[x] for x in range(len(hidden)) if x != v]
-            if Solver.check_hidden_possible(other_hiddens, other_validators) is not None:
+            if Solver.check_hidden_possible(other_hiddens, other_validators, self.filter_unique_answer) is not None:
                 print(' -', hidden, '=>', option, '[x] validator', chr(v + ord('A')), 'is useless')
                 return True
         return False
@@ -159,7 +174,6 @@ class Solver:
                 # append to result
                 queries = previous_queries + [(rs, v)]
                 result_queries_and_entropies.append((queries, entropy))
-                print(' -', option, *[chr(vv + ord('A')) for _, vv in queries], '=>', entropy)
 
                 # recursively find more queries
                 hidden_and_options_if_true = [(h, op) for h, op in previous_hidden_and_options if self.game.validators[v].standards[h[v]](*option) == True]
@@ -180,9 +194,19 @@ class Solver:
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('validator_ids', nargs='+', type=int)
+    parser.add_argument('--no-filter-unique', action='store_true')
+    parser.add_argument('--no-filter-useless', action='store_true')
     args = parser.parse_args()
 
-    solver = Solver(args.validator_ids)
+    kwargs = {}
+    if args.no_filter_unique:
+        kwargs['filter_unique_answer'] = False
+    if args.no_filter_useless:
+        kwargs['filter_useless_validators'] = False
+    
+    solver = Solver(args.validator_ids, **kwargs)
+    if solver.solved():
+        solver.next_query()
     while not solver.solved():
         queries = solver.next_query()
         if not queries:
